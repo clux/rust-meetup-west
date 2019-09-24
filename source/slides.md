@@ -56,6 +56,7 @@ notes:
 - return all verified manifests
 - bail on any errors (BAD)
 - for simplicity, ignore second arg, assumee some Error type (chain/failure)
+- towards parallism: define unit - fn!
 
 ---
 <!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
@@ -360,6 +361,15 @@ notes:
 - using those threads better or having a better algorithm more important
 
 ---
+<!-- .slide: data-background-image="./hypnotoad.webp" data-background-size="100% auto" class="color"-->
+
+notes:
+- async is to going to solve everything
+- i'm not just speculating, have also had a beer
+- really: core == allowing smarter use of threads with Tasks + Futures
+- BUT: my examples here are a little speculative
+
+---
 <!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
 futures - what we have (1.39)
 
@@ -388,7 +398,7 @@ notes:
 - but useful showcases available
 - everything build on FutureExt (not stabilized)
 - "If Future T is an async version of T, then Stream T is an async version of Iterator T"
-- tokio almost using std::future in their 0.2 (can throttle)
+- tokio almost using std::future in their 0.2 (can throttle - tiller)
 - async-std is really experimenting with streams (can collect)
 
 ---
@@ -486,7 +496,6 @@ async fn validate() -> Result<Vec<Manifest>> {
 notes:
 - would very much like my code to look like this.
 - it doesn't.
-- thank you.
 
 ---
 <!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
