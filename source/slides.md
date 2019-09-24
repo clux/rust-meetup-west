@@ -319,11 +319,11 @@ notes:
 - actually a bit bad practice to use rayon for non-data
 - should use message passing on top of own `threadpool`
 - https://docs.rs/threadpool/1.7.1/threadpool/
-- end result of rayon on IO not super smart. CONSIDER:
+- end result that thread pool on IO not super smart. CONSIDER:
 
 ---
 <!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
-bash equivalent
+unix equivalent
 
 ```rust
 // shipcat list-services
@@ -353,6 +353,8 @@ notes:
 ---
 <!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
 [Performance Matters - Emery Berger](https://www.youtube.com/watch?v=r-TLSBdHe1A)
+<br>
+<small>StrangeLoop September 2019</small>
 
 notes:
 - scientifically speed-ups! (cpp/rust, cache misses + layouts matter)
@@ -365,22 +367,25 @@ notes:
 
 notes:
 - async is to going to solve everything
-- i'm not just speculating, have also had a beer
-- really: core == allowing smarter use of threads with Tasks + Futures
+- nothing blocking, so can work with less threads with same effect
+- having your thread pool know when it can resume (Waker)
+- really: core of async: allowing smarter use of threads!
 - BUT: my examples here are a little speculative
 
 ---
 <!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
 futures - what we have (1.39)
 
-- only [std::future](https://doc.rust-lang.org/std/future/index.html) and [std::task](https://doc.rust-lang.org/std/task/index.html)
+- only [std::task](https://doc.rust-lang.org/std/task/index.html) and [std::future](https://doc.rust-lang.org/std/future/index.html)
 - [core::future::Future trait](https://doc.rust-lang.org/nightly/core/future/trait.Future.html)
 - async keyword, Pin api
 - [areweasyncyet](https://areweasyncyet.rs/)
 
 notes:
-- all the low level stuff - these things are very hairy
-- suspect i might not touch these much at all
+- tasks, what is your workload
+- futures, what your workload is meant to return
+- hairy low level stuff - on which you can build a runtime
+- suspect i might not touch these much
 - took a long time to decide - incredibly complicated api decisions you can read about via arewesyncyet
 
 ---
