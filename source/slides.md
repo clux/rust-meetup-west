@@ -338,7 +338,7 @@ fn validate(svcs: Vec<String>) -> Result<Vec<Manifest>> {
 ```sh
 shipcat validate $(shipcat list-services)
 shipcat list-services | xargs shipcat validate
-shipcat list-services | xargs -P 20 -n 20 shipcat verify
+shipcat list-services | xargs -P 20 -n 20 shipcat validate
 ```
 
 notes:

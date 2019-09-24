@@ -73,6 +73,7 @@ type Result<T> = std::result::Result<T, Error>;
 <li>return all verified manifests</li>
 <li>bail on any errors (BAD)</li>
 <li>for simplicity, ignore second arg, assumee some Error type (chain/failure)</li>
+<li>towards parallism: define unit - fn!</li>
 </ul>
 </aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
 Iter -> map -> colllect
@@ -320,10 +321,10 @@ use rayon::{iter::Either, prelude::*};
 <li>actually a bit bad practice to use rayon for non-data</li>
 <li>should use message passing on top of own <code>threadpool</code></li>
 <li><a href="https://docs.rs/threadpool/1.7.1/threadpool/">https://docs.rs/threadpool/1.7.1/threadpool/</a></li>
-<li>end result of rayon on IO not super smart. CONSIDER:</li>
+<li>end result that thread pool on IO not super smart. CONSIDER:</li>
 </ul>
 </aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
-bash equivalent
+unix equivalent
 
 ```rust
 // shipcat list-services
@@ -338,7 +339,7 @@ fn validate(svcs: Vec<String>) -> Result<Vec<Manifest>> {
 ```sh
 shipcat validate $(shipcat list-services)
 shipcat list-services | xargs shipcat validate
-shipcat list-services | xargs -P 20 -n 20 shipcat verify
+shipcat list-services | xargs -P 20 -n 20 shipcat validate
 ```
 
 <aside class="notes"><ul>
@@ -352,6 +353,8 @@ shipcat list-services | xargs -P 20 -n 20 shipcat verify
 </ul>
 </aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
 [Performance Matters - Emery Berger](https://www.youtube.com/watch?v=r-TLSBdHe1A)
+<br>
+<small>StrangeLoop September 2019</small>
 
 <aside class="notes"><ul>
 <li>scientifically speed-ups! (cpp/rust, cache misses + layouts matter)</li>
@@ -359,17 +362,28 @@ shipcat list-services | xargs -P 20 -n 20 shipcat verify
 <li>at a certain point there&#39;s an overhead to spawning more threads</li>
 <li>using those threads better or having a better algorithm more important</li>
 </ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-image="./hypnotoad.webp" data-background-size="100% auto" class="color"-->
+
+<aside class="notes"><ul>
+<li>async is to going to solve everything</li>
+<li>nothing blocking, so can work with less threads with same effect</li>
+<li>having your thread pool know when it can resume (Waker)</li>
+<li>really: core of async: allowing smarter use of threads!</li>
+<li>BUT: my examples here are a little speculative</li>
+</ul>
 </aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
 futures - what we have (1.39)
 
-- only [std::future](https://doc.rust-lang.org/std/future/index.html) and [std::task](https://doc.rust-lang.org/std/task/index.html)
+- only [std::task](https://doc.rust-lang.org/std/task/index.html) and [std::future](https://doc.rust-lang.org/std/future/index.html)
 - [core::future::Future trait](https://doc.rust-lang.org/nightly/core/future/trait.Future.html)
 - async keyword, Pin api
 - [areweasyncyet](https://areweasyncyet.rs/)
 
 <aside class="notes"><ul>
-<li>all the low level stuff - these things are very hairy</li>
-<li>suspect i might not touch these much at all</li>
+<li>tasks, what is your workload</li>
+<li>futures, what your workload is meant to return</li>
+<li>hairy low level stuff - on which you can build a runtime</li>
+<li>suspect i might not touch these much</li>
 <li>took a long time to decide - incredibly complicated api decisions you can read about via arewesyncyet</li>
 </ul>
 </aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
@@ -386,7 +400,7 @@ streams - what we can experiment with
 <li>but useful showcases available</li>
 <li>everything build on FutureExt (not stabilized)</li>
 <li>&quot;If Future T is an async version of T, then Stream T is an async version of Iterator T&quot;</li>
-<li>tokio almost using std::future in their 0.2 (can throttle)</li>
+<li>tokio almost using std::future in their 0.2 (can throttle - tiller)</li>
 <li>async-std is really experimenting with streams (can collect)</li>
 </ul>
 </aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
@@ -478,7 +492,6 @@ async fn validate() -> Result<Vec<Manifest>> {
 <aside class="notes"><ul>
 <li>would very much like my code to look like this.</li>
 <li>it doesn&#39;t.</li>
-<li>thank you.</li>
 </ul>
 </aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
 
