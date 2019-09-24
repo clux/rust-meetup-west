@@ -1,4 +1,4 @@
-# rust kube talk at rust london user group 24th of August
+# rust parallelism talk at rust london user group 24th of September
 
 https://www.meetup.com/Rust-London-User-Group/events/264890481/
 
