@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+
+    <title>reveal-md</title>
+    <meta property="og:title" content="reveal-md" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://clux.github.io/rust-meetup-west//featured-slide.jpg" />
+    <meta property="og:url" content="https://clux.github.io/rust-meetup-west/" />
+    <link rel="stylesheet" href="./css/reveal.css" />
+    <link rel="stylesheet" href="./css/theme/black.css" id="theme" />
+    <link rel="stylesheet" href="./css/highlight/zenburn.css" />
+    <link rel="stylesheet" href="./css/print/paper.css" type="text/css" media="print" />
+
+  </head>
+  <body>
+    <div class="reveal">
+      <div class="slides"><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+
+### Parallel Workloads
+
+- Eirik Albrigtsen : [github.com/clux](https://github.com/clux) 
+- [clux.dev](https://clux.dev) / [@sszynrae](https://twitter.com/sszynrae)
+
+- Babylon Health : [github.com/Babylonpartners](https://github.com/Babylonpartners)
+
+<img src="./babylon.png" style="background: none; box-shadow: none; border: none; width: 120px; position: absolute; top: 360px; left: 0px" />
+<img src="./babylon.png" style="background: none; box-shadow: none; border: none; width: 120px; position: absolute; top: 360px; left: 140px" />
+<img src="./babylon.png" style="background: none; box-shadow: none; border: none; width: 120px; position: absolute; top: 360px; left: 280px" />
+<img src="./babylon.png" style="background: none; box-shadow: none; border: none; width: 120px; position: absolute; top: 360px; left: 420px" />
+<img src="./babylon.png" style="background: none; box-shadow: none; border: none; width: 120px; position: absolute; top: 360px; left: 560px" />
+
+<aside class="notes"><ul>
+<li>Hi. Eirik / clux online. Have these urls.</li>
+<li>Talk: Talking a little bit about parallelism, iterator patterns, and some elegant functional solutions to one sample problem.</li>
+<li>Hopefully will contain some ideas to help speed up your code today, and how you can make it even better with futures in the future.</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#333" -->
+
+<img src="./shipcat.svg" height="420" width="420" style="border:0px; box-shadow: none; background-color: #333; margin-top: 355px"/>
+<a style="font-size: 30px; float: right; margin-top: 620px" href="https://github.com/Babylonpartners/shipcat">github:shipcat</a>
+
+<aside class="notes"><ul>
+<li>write rust for these guys in this building. big open source thing i work a lot on is <code>shipcat</code></li>
+<li>which defines what a microservice is, how controls how to deploy it to k8s =&gt; our defacto helm replacement in rust.</li>
+<li>talk about one solution from it because it illustrates the different approaches well.</li>
+<li>code all available online, simplified examples herein.</li>
+<li>TL;DR we have close to half a thousand microservices config managed in one huge repo. To avoid congestion; We validate all of those on every merge with a super tight rust loop.</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+Problem - imperative:
+
+```rust
+fn validate() -> Result<Vec<Manifest>> {
+    let svcs = shipcat::list_services()?;
+    let mut manifests = vec![];
+    for s in svcs {
+        let mf = shipcat::load(s)?;
+        mf.verify()?;
+        manifests.push(mf);
+    }
+    Ok(manifests)
+}
+
+type Result<T> = std::result::Result<T, Error>;
+```
+
+<aside class="notes"><ul>
+<li>Find all subdirs, load one file in each using serde</li>
+<li>Load all files in that subdir, merge manifest for the relevant region, load its templates, then verify them (sequential, tons of disk IO)</li>
+<li>return all verified manifests</li>
+<li>bail on any errors (BAD)</li>
+<li>for simplicity, ignore second arg, assumee some Error type (chain/failure)</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+Iter -> map -> colllect
+
+```rust
+fn validate() -> Result<Vec<Manifest>> {
+    let svcs = shipcat::list_services()?;
+    svcs.into_iter()
+        .map(|s| {
+            let mf = shipcat::load(s)?;
+            mf.verify()?;
+            Ok(mf)
+        }).collect()
+}
+```
+
+<aside class="notes"><ul>
+<li>same behaviour - body of for loop into map</li>
+<li>need to return Result because was using ? in body =&gt; Ok</li>
+<li>collect vec of results into result of vec</li>
+<li>fails entire operation on first errors (same behavior)</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+Iter -> map -> colllect (factor out result fn)
+
+```rust
+fn validate() -> Result<Vec<Manifest>> {
+    let svcs = shipcat::list_services()?;
+    svcs.into_iter()
+        .map(|s| Ok(load_and_verify(s)?))
+        .collect()
+}
+fn load_and_verify(s: &str) -> Result<Manifest>;
+```
+<a>-</a>
+
+<aside class="notes"><ul>
+<li>note the pointless questionmark inside an Ok, is that pointless?</li>
+<li>Error::into!</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+Iter -> map -> colllect (factor out result fn)
+
+```rust
+fn validate() -> Result<Vec<Manifest>> {
+    let svcs = shipcat::list_services()?;
+    svcs.into_iter()
+        .map(|s| load_and_verify(s))
+        .collect()
+}
+fn load_and_verify(s: &str) -> Result<Manifest>;
+```
+<a>-</a>
+
+<aside class="notes"><ul>
+<li>if load_and_verify has a compatible Error type (assuming that)</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+Iter -> map -> colllect (factor out result fn)
+
+```rust
+fn validate() -> Result<Vec<Manifest>> {
+    let svcs = shipcat::list_services()?;
+    svcs.into_iter()
+        .map(load_and_verify)
+        .collect()
+}
+fn load_and_verify(s: &str) -> Result<Manifest>;
+```
+
+<a class="fragment" href="https://doc.rust-lang.org/stable/rust-by-example/error/iter_result.html">rust-by-example: iterating over Result</a>
+
+<aside class="notes"><ul>
+<li>if load_and_verify has the same signature as map expects: ONE ARG</li>
+<li>NOW: We want to do better error handling.</li>
+<li>MIDSLIDE: Rust-by-example suggests filter_map</li>
+<li>But also want the successes if it worked for further processing!</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+Iter -> map -> partition (incomplete)
+
+```rust
+fn validate() -> Result<Vec<Manifest>> {
+    let svcs = shipcat::list_services()?;
+    let (oks, errs) : (Vec<_>, Vec<_>) = svcs.into_iter()
+        .map(load_and_verify)
+        .partition(Result::is_ok)
+```
+
+<aside class="notes"><ul>
+<li>boolean condition fn that dictates left or right</li>
+<li>returns a pair of collections (forcing to vec)</li>
+<li>partition force you to go through every item</li>
+<li>types here? -&gt; Result :/</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+Iter -> map -> partition
+
+```rust
+fn validate() -> Result<Vec<Manifest>> {
+    let svcs = shipcat::list_services()?;
+    let (oks, errs) : (Vec<_>, Vec<_>) = svcs.into_iter()
+        .map(load_and_verify)
+        .partition(Result::is_ok)
+    errs.into_iter().collect::<Result<Vec<_>>>()?;
+    let oks = okrs.into_iter().map(Result::unwrap).collect();
+    Ok(oks)
+}
+```
+
+<aside class="notes"><ul>
+<li>need to unwrap and unwrap_err :/</li>
+<li>unwrap_err actually require Debug impl - so am just collecting</li>
+<li>Too much boilerplate. Want to keep unwrap to minimum!</li>
+<li>thankfully, as filter has filter_map, partition has:</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+Iter -> map -> partition_map
+
+```rust
+fn validate() -> Result<Vec<Manifest>> {
+    let svcs = shipcat::list_services()?;
+    let (errs, oks) : (Vec<Error>, Vec<_>) = svcs.into_iter()
+        .map(load_and_verify)
+        .partition_map(|r| match r {
+            Err(e) => Either::Left(e),
+            Ok(o) => Either::Right(o),
+        });
+    for e in errs {
+        return Err(e);
+    }
+    Ok(oks)
+}
+use itertools::{Itertools, Either};
+```
+
+<aside class="notes"><ul>
+<li>itertools give you <code>partition_map</code> and <code>Either</code></li>
+<li>types now correct, no unwrap. like if-let!</li>
+<li>Either is equivalent to Result in some sense; 2-part enums over 2 generic types, where 1 goes in the first el, and 2 in the second el.</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+Iter -> map -> partition_map
+
+```rust
+fn validate() -> Result<Vec<Manifest>> {
+    let svcs = shipcat::list_services()?;
+    let (errs, oks) : (Vec<Error>, Vec<_>) = svcs.into_iter()
+        .map(load_and_verify)
+        .partition_map(Either::from);
+    for e in errs {
+        return Err(e);
+    }
+    Ok(oks)
+}
+```
+
+```rust
+// Convert from Result to Either
+// with Ok => Right and Err => Left.
+impl<L, R> From<Result<R, L>> for Either<L, R>
+```
+
+<aside class="notes"><ul>
+<li>Can convert From a Result to an Either</li>
+<li>Might look a little weird (partition map to an either from result)</li>
+<li>Super easy to focus on the error handling now!</li>
+<li>Same example. Still just stops on first errors (but runs all)</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+Iter -> map -> partition_map
+
+```rust
+fn validate() -> Result<Vec<Manifest>> {
+    let svcs = shipcat::list_services()?;
+    let (errs, oks) : (Vec<_>, Vec<_>) = svcs.into_iter()
+        .map(load_and_verify)
+        .partition_map(Either::from);
+    if !errs.is_empty() {
+        for e in &errs {
+            error!("{}", e);
+            debug!("{:?}", e);
+        }
+        bail!("Invalid manifests in {} files", errs.len());
+    }
+    Ok(oks)
+}
+```
+
+<aside class="notes"><ul>
+<li>CLI use case here; error description (Display) using <code>error!</code></li>
+<li>Debug (trace with error-chain) using <code>debug!</code></li>
+<li>This is the type of error handling here!</li>
+<li>All at the end &gt; in the middle of a big imperative loop</li>
+<li>Avoids interleaving when we switch to parallel mode!</li>
+<li>Error handling. Koan: Nicer code =&gt; worse error handling</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+Iter -> map -> partition_map (sequential)
+
+```rust
+fn validate() -> Result<Vec<Manifest>> {
+    let svcs = shipcat::list_services()?;
+    let (errs, oks) : (Vec<_>, Vec<_>) = svcs.into_iter()
+        .map(load_and_verify)
+        .partition_map(Either::from);
+    handle_errs(errs)?;
+    Ok(oks)
+}
+fn handle_errs(errs: Vec<Error>) -> Result<()>;
+```
+
+<aside class="notes"><ul>
+<li>factor out the error handling!</li>
+<li>to a fn that returns Err when the vector is non-empty!</li>
+<li>now that we&#39;ve done the abstraction rabit hole, let&#39;s parallelize:</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+Iter -> map -> partition_map (parallel)
+
+```rust
+fn validate() -> Result<Vec<Manifest>> {
+    let svcs = shipcat::list_services()?;
+    let (errs, oks) : (Vec<_>, Vec<_>) = svcs.par_iter()
+        .map(load_and_verify)
+        .partition_map(Either::from);
+    handle_errs(errs)?;
+    Ok(oks)
+}
+use rayon::{iter::Either, prelude::*};
+```
+
+<aside class="notes"><ul>
+<li>rayon includes <code>Either</code> + itertools!</li>
+<li>RAYON_NUM_THREADS == num_cores (logical with HT)</li>
+<li>(data parallelism for io stuff - plz ignore)</li>
+<li>Suppose measured pre parallel. 20s total, 2s in list_services</li>
+<li>How much speedup on 100 cores? Amdahl =&gt; only 10</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template">![amdahl](./amdahls.png)
+
+<aside class="notes"><ul>
+<li>speedup we can get from parallel iteration limited by the sequential part</li>
+<li>can cheat here by setting num threads to 20 in rayon (because most io bound)</li>
+<li>actually a bit bad practice to use rayon for non-data</li>
+<li>should use message passing on top of own <code>threadpool</code></li>
+<li><a href="https://docs.rs/threadpool/1.7.1/threadpool/">https://docs.rs/threadpool/1.7.1/threadpool/</a></li>
+<li>end result of rayon on IO not super smart. CONSIDER:</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+bash equivalent
+
+```rust
+// shipcat list-services
+shipcat::list_services()
+
+// shipcat validate $@..
+fn validate(svcs: Vec<String>) -> Result<Vec<Manifest>> {
+    svcs.iter().map(load_and_verify).collect()
+}
+```
+
+```sh
+shipcat validate $(shipcat list-services)
+shipcat list-services | xargs shipcat validate
+shipcat list-services | xargs -P 20 -n 20 shipcat verify
+```
+
+<aside class="notes"><ul>
+<li>suppose serial step in one command</li>
+<li>remove par part, do it sequentially (though worse error handling)</li>
+<li>pipe that in batches to a fn that takes arguments</li>
+<li>args == imperative perf, xargs (400 calls) tiny bit worse</li>
+<li>xargs -P batches 400 into 20x20</li>
+<li>rayon not much better than this: measured 10% better (worse error handling)</li>
+<li>if interested in tuning:</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+[Performance Matters - Emery Berger](https://www.youtube.com/watch?v=r-TLSBdHe1A)
+
+<aside class="notes"><ul>
+<li>scientifically speed-ups! (cpp/rust, cache misses + layouts matter)</li>
+<li>but ultimately we&#39;re just choking on threads that are blocking here</li>
+<li>at a certain point there&#39;s an overhead to spawning more threads</li>
+<li>using those threads better or having a better algorithm more important</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+futures - what we have (1.39)
+
+- only [std::future](https://doc.rust-lang.org/std/future/index.html) and [std::task](https://doc.rust-lang.org/std/task/index.html)
+- [core::future::Future trait](https://doc.rust-lang.org/nightly/core/future/trait.Future.html)
+- async keyword, Pin api
+- [areweasyncyet](https://areweasyncyet.rs/)
+
+<aside class="notes"><ul>
+<li>all the low level stuff - these things are very hairy</li>
+<li>suspect i might not touch these much at all</li>
+<li>took a long time to decide - incredibly complicated api decisions you can read about via arewesyncyet</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+streams - what we can experiment with
+
+- async iterator or streams == unresolved
+- [future/FutureExt trait](https://rust-lang-nursery.github.io/futures-api-docs/0.1.27/futures/future/trait.FutureExt.html)
+- [futures/stream/trait.Stream](https://docs.rs/futures-preview/0.3.0-alpha.18/futures/stream/trait.Stream.html)
+- [tokio::stream::StreamExt](https://docs.rs/tokio/0.2.0-alpha.5/tokio/stream/trait.StreamExt.html)
+- [async_std/stream/trait.Stream](https://docs.rs/async-std/0.99.6/async_std/stream/trait.Stream.html)
+
+<aside class="notes"><ul>
+<li>unlikely to be stable for some time</li>
+<li>but useful showcases available</li>
+<li>everything build on FutureExt (not stabilized)</li>
+<li>&quot;If Future T is an async version of T, then Stream T is an async version of Iterator T&quot;</li>
+<li>tokio almost using std::future in their 0.2 (can throttle)</li>
+<li>async-std is really experimenting with streams (can collect)</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+Iter -> map -> partition_map (parallel)
+
+```rust
+fn validate() -> Result<Vec<Manifest>> {
+    let svcs = shipcat::list_services()?;
+    let (errs, oks) : (Vec<_>, Vec<_>) = svcs.par_iter()
+        .map(load_and_verify)
+        .partition_map(Either::from);
+    handle_errs(errs)?;
+    Ok(oks)
+}
+fn load_and_verify(s: &str) -> Result<Manifest>;
+fn handle_errs(errs: Vec<Error>) -> Result<()>;
+```
+
+<aside class="notes"><ul>
+<li>Recap. Depend on 3 functions that are sync. Listed 2 below.</li>
+<li>If partition_map makes it into async_std (or tokio) then:</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+Iter -> stream -> map -> partition_map
+
+```rust
+async fn validate() -> Result<Vec<Manifest>> {
+    let svcs = shipcat::list_services().await?;
+    let (errs, oks) : (Vec<_>, Vec<_>) = stream::iter(svcs)
+        .map(load_and_verify)
+        .partition_map(Either::from).await;
+    handle_errs(errs)?;
+    Ok(oks)
+}
+async fn load_and_verify(s: &str) -> Result<Manifest>;
+fn handle_errs(errs: Vec<Error>) -> Result<()>;
+```
+
+<aside class="notes"><ul>
+<li>propagate futures all the way down, all file-io</li>
+<li>wait for async-std/tokio to provide nice combinators</li>
+<li>collect already exists on async stream inside async-std (Thursday)</li>
+<li>more efficient than rayon already; thread pool more effective at context switching</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+iter -> stream
+
+```rust
+    let svcs = shipcat::list_services().await?;
+    let (errs, oks) : (Vec<_>, Vec<_>) = stream::iter(svcs)
+        .map(load_and_verify)
+        .partition_map(Either::from).await;
+```
+
+<aside class="notes"><ul>
+<li>we await a complete vector here..</li>
+<li>then turn that into a stream via iter</li>
+<li>what if we just started with a stream?</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+stream -> stream!
+
+```rust
+    let svcs = shipcat::list_services();
+    let (errs, oks) : (Vec<_>, Vec<_>) = svcs
+        .map(load_and_verify)
+        .partition_map(Either::from).await;
+```
+
+<aside class="notes"><ul>
+<li>if list_services returned a stream!</li>
+<li>avoids speedbump from amdahls law!</li>
+<li>pervasive makes more code paralleliseable!</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+dream
+
+```rust
+async fn validate() -> Result<Vec<Manifest>> {
+    let svcs = shipcat::list_services();
+    let (errs, oks) : (Vec<_>, Vec<_>) = svcs
+        .map(load_and_verify)
+        .partition_map(Either::from).await;
+    handle_errs(errs)?;
+    Ok(oks)
+}
+```
+
+<aside class="notes"><ul>
+<li>would very much like my code to look like this.</li>
+<li>it doesn&#39;t.</li>
+<li>thank you.</li>
+</ul>
+</aside></script></section><section  data-markdown><script type="text/template"><!-- .slide: data-background-color="#353535" class="center color" style="text-align: left;" -->
+
+- Eirik Albrigtsen : [github.com/clux](https://github.com/clux)
+
+- [clux.dev](https://clux.dev) / [@sszynrae](https://twitter.com/sszynrae)
+
+- Babylon Health : [github.com/Babylonpartners](https://github.com/Babylonpartners)
+
+<img src="./babylon.png" style="background: none; box-shadow: none; border: none; width: 120px; position: absolute; top: 300px; left: 0px" />
+<img src="./babylon.png" style="background: none; box-shadow: none; border: none; width: 120px; position: absolute; top: 300px; left: 140px" />
+<img src="./babylon.png" style="background: none; box-shadow: none; border: none; width: 120px; position: absolute; top: 300px; left: 280px" />
+<img src="./babylon.png" style="background: none; box-shadow: none; border: none; width: 120px; position: absolute; top: 300px; left: 420px" />
+<img src="./babylon.png" style="background: none; box-shadow: none; border: none; width: 120px; position: absolute; top: 300px; left: 560px" />
+</script></section></div>
+    </div>
+
+    <script src="./js/reveal.js"></script>
+
+    <script>
+      function extend() {
+        var target = {};
+        for (var i = 0; i < arguments.length; i++) {
+          var source = arguments[i];
+          for (var key in source) {
+            if (source.hasOwnProperty(key)) {
+              target[key] = source[key];
+            }
+          }
+        }
+        return target;
+      }
+
+      // Optional libraries used to extend on reveal.js
+      var deps = [
+        { src: './plugin/markdown/marked.js', condition: function() { return !!document.querySelector('[data-markdown]'); } },
+        { src: './plugin/markdown/markdown.js', condition: function() { return !!document.querySelector('[data-markdown]'); } },
+        { src: './plugin/highlight/highlight.js', async: true, callback: function() { hljs.initHighlightingOnLoad(); } },
+        { src: './plugin/zoom-js/zoom.js', async: true },
+        { src: './plugin/notes/notes.js', async: true },
+        { src: './plugin/math/math.js', async: true }
+      ];
+
+      // default options to init reveal.js
+      var defaultOptions = {
+        controls: true,
+        progress: true,
+        history: true,
+        center: true,
+        transition: 'default', // none/fade/slide/convex/concave/zoom
+        dependencies: deps
+      };
+
+      // options from URL query string
+      var queryOptions = Reveal.getQueryHash() || {};
+
+      var options = extend(defaultOptions, {"transition":"none"}, queryOptions);
+    </script>
+
+
+    <script>
+      Reveal.initialize(options);
+    </script>
+  </body>
+</html>
